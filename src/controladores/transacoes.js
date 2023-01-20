@@ -1,30 +1,25 @@
-const db = require("../conexaoBanco");
+const knex = require("../conexao");
 
 const listarTransacoesUsuario = async (req, res) => {
     const { id } = req.usuario;
-    const { filtro } = req.query;
+    let { filtro } = req.query;
 
-    if (filtro && !Array.isArray(filtro)) {
-        return res.status(400).json({ mensagem: "O filtro precisa ser um array." });
-    }
     try {
-        let queryFiltro = ""
-        let arrayFiltro;
+        const transacoes = await knex
+            .select("t.*", "c.descricao as categoria_nome")
+            .from("transacoes as t")
+            .leftJoin("categorias as c", function () {
+                this
+                    .on("t.categoria_id", "=", "c.id")
+            })
+            .where({ "t.usuario_id": id });
+
         if (filtro) {
-            arrayFiltro = filtro.map(item => `${item}`);
-            queryFiltro += "AND c.descricao ILIKE ANY($2)";
+            const transacoesFiltradas = transacoes.filter(
+                (transacao) => filtro.includes(transacao.categoria_nome)
+            )
+            return res.status(200).json(transacoesFiltradas);
         }
-        const queryTransacao = `
-            SELECT t.*, c.descricao as categoria_nome 
-            FROM transacoes t LEFT JOIN categorias c
-            ON t.categoria_id = c.id
-            WHERE t.usuario_id = $1
-            ${queryFiltro}
-        `
-        const parametros = filtro ? [id, arrayFiltro] : [id];
-
-        const { rows: transacoes } = await db.query(queryTransacao, parametros);
-
         return res.status(200).json(transacoes);
 
     } catch (error) {
@@ -33,25 +28,23 @@ const listarTransacoesUsuario = async (req, res) => {
 }
 
 const atualizarTransacaoUsuario = async (req, res) => {
-    const { idTransacao } = req.params;
-    const { id } = req.usuario;
     const { descricao, valor, data, categoria_id, tipo } = req.body;
+    const { idTransacao } = req.params;
 
     try {
-        const transacao = await db.query(
-            `SELECT * FROM transacoes 
-            WHERE id = $1 AND usuario_id = $2`,
-            [idTransacao, id]
-        )
-        if (transacao.rowCount <= 0) {
-            return res.status(404).json({ mensagem: "Transação não encontrada." });
+        const transacaoAtualizada = await knex("transacoes")
+            .where({ id: idTransacao })
+            .update({
+                descricao,
+                valor,
+                data,
+                categoria_id,
+                tipo
+            });
+
+        if (!transacaoAtualizada) {
+            return res.status(400).json({ mensagem: "A transação não foi atualizada." });
         }
-        await db.query(
-            `UPDATE transacoes SET 
-            descricao = $1, valor = $2, data = $3, categoria_id = $4, tipo = $5
-            WHERE id = $6 AND usuario_id = $7`,
-            [descricao, valor, data, categoria_id, tipo, idTransacao, id]
-        )
         return res.status(204).send();
 
     } catch (error) {
@@ -61,22 +54,13 @@ const atualizarTransacaoUsuario = async (req, res) => {
 
 const excluirTransacaoUsuario = async (req, res) => {
     const { idTransacao } = req.params;
-    const { id } = req.usuario;
 
     try {
-        const transacao = await db.query(
-            `SELECT * FROM transacoes 
-            WHERE id = $1 AND usuario_id = $2`,
-            [idTransacao, id]
-        )
-        if (transacao.rowCount <= 0) {
-            return res.status(404).json({ mensagem: "Transação não encontrada." });
+        const transacaoExcluida = await knex("transacoes").where({ id: idTransacao }).del();
+
+        if (!transacaoExcluida) {
+            return res.status(400).json({ mensagem: "A transação não foi excluída." });
         }
-        await db.query(
-            `DELETE FROM transacoes 
-            WHERE id = $1 AND usuario_id = $2`,
-            [idTransacao, id]
-        )
         return res.status(204).send();
 
     } catch (error) {
@@ -85,57 +69,54 @@ const excluirTransacaoUsuario = async (req, res) => {
 }
 
 const detalharTransacaoUsuario = async (req, res) => {
-    const { id } = req.usuario;
     const { idTransacao } = req.params;
 
     try {
-        const { rowCount } = await db.query(
-            `SELECT * FROM transacoes 
-            WHERE id = $1 AND usuario_id = $2`,
-            [idTransacao, id]
-        )
-        if (rowCount <= 0) {
-            return res.status(404).json({ mensagem: "Transação não encontrada." });
-        }
-        const { rows } = await db.query(
-            `SELECT t.id, t.tipo, t.descricao, t.valor, t.data, 
-            t.usuario_id, t.categoria_id, c.descricao as categoria_nome
-            FROM transacoes t LEFT JOIN categorias c
-            ON t.categoria_id = c.id
-            WHERE t.id = $1 AND t.usuario_id = $2`,
-            [idTransacao, id]
-        )
-        return res.status(200).json(rows[0]);
+        const transacaoDetalhada = await knex
+            .select("t.*", "c.descricao as categoria_nome")
+            .from("transacoes as t")
+            .leftJoin("categorias as c", function () {
+                this
+                    .on("t.categoria_id", "=", "c.id")
+            })
+            .where({ "t.id": idTransacao })
+            .first();
+
+        return res.status(200).json(transacaoDetalhada);
 
     } catch (error) {
-        console.log(error)
         return res.status(500).json({ mensagem: "Erro interno do servidor." });
     }
 }
 
 const cadastrarTransacaoUsuario = async (req, res) => {
+    const { tipo, descricao, valor, data, categoria_id } = req.body;
     const { id } = req.usuario;
-    const { descricao, valor, data, categoria_id, tipo } = req.body;
 
-    if (tipo !== "entrada" && tipo !== "saida") {
-        return res.status(400).json({ mensagem: "O campo tipo só recebe valores igual a 'entrada' ou 'saida'." })
-    }
     try {
-        const { rowCount } = await db.query(
-            "SELECT * FROM categorias WHERE id = $1",
-            [categoria_id]
-        )
-        if (rowCount <= 0) {
-            return res.status(404).json({ mensagem: "O id da categoria não encontrado." })
+        const categoria = await knex("categorias").where({ id: categoria_id }).first();
+
+        if (!categoria) {
+            return res.status(404).json({ mensagem: "Categoria não encontrada." })
         }
-        const { rows } = await db.query(
-            `INSERT INTO transacoes 
-            (tipo, descricao, valor, data, usuario_id, categoria_id)
-            VALUES
-            ($1, $2, $3, $4, $5, $6) RETURNING *`,
-            [tipo, descricao, valor, data, id, categoria_id]
-        )
-        return res.status(200).json(rows[0]);
+
+        const [transacaoCadastrada] = await knex("transacoes")
+            .insert({
+                tipo,
+                descricao,
+                valor,
+                data,
+                usuario_id: id,
+                categoria_id
+            })
+            .returning("*");
+
+        if (transacaoCadastrada.length === 0) {
+            return res.status(400).json({ mensagem: "A transação não foi cadastrada." });
+        }
+        transacaoCadastrada.categoria_nome = categoria.descricao;
+
+        return res.status(200).json(transacaoCadastrada);
 
     } catch (error) {
         return res.status(500).json({ mensagem: "Erro interno do servidor." });
@@ -146,23 +127,19 @@ const obterExtratoUsuario = async (req, res) => {
     const { id } = req.usuario;
 
     try {
-        const { rows: resultado } = await db.query(
-            `SELECT tipo, SUM (valor) FROM transacoes
-            WHERE usuario_id = $1 GROUP BY tipo`,
-            [id]
-        )
+        const extrato = await knex
+            .select("tipo")
+            .from("transacoes")
+            .sum("valor")
+            .where({ usuario_id: id })
+            .groupBy("tipo");
+
         let entrada = 0;
         let saida = 0;
-        for (let item of resultado) {
-            if (item.tipo === "entrada") {
-                entrada = item.sum;
-            }
-            if (item.tipo === "saida") {
-                saida = item.sum;
-            }
+        for (let item of extrato) {
+            item.tipo === "entrada" ? entrada += item.sum : saida += item.sum;
         }
-        const extrato = { entrada, saida };
-        return res.status(200).json(extrato);
+        return res.status(200).json({ entrada, saida });
 
     } catch (error) {
         return res.status(500).json({ mensagem: "Erro interno do servidor." });

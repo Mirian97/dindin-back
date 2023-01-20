@@ -1,10 +1,10 @@
-const db = require("../conexaoBanco");
+const knex = require("../conexao");
 
 const listarCategorias = async (req, res) => {
     try {
-        const { rows } = await db.query("SELECT * FROM categorias");
+        const categorias = await knex("categorias");
 
-        return res.status(200).json(rows);
+        return res.status(200).json(categorias);
 
     } catch (error) {
         return res.status(500).json({ mensagem: "Erro interno do servidor." });

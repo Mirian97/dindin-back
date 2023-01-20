@@ -1,34 +1,32 @@
-const db = require("../conexaoBanco");
+const knex = require("../conexao");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
-const { TOKEN_PASSWORD } = require("../../credenciais");
 
 const cadastrarUsuario = async (req, res) => {
   const { nome, email, senha } = req.body;
 
   try {
-    const usuario = await db.query(
-      "SELECT * FROM usuarios WHERE email = $1",
-      [email]
-    )
+    const emailExistente = await knex("usuarios").where({ email }).first();
 
-    if (usuario.rowCount > 0) {
+    if (emailExistente) {
       return res.status(400).json({ mensagem: "E-mail já está cadastrado." });
     }
     const senhaCriptografada = await bcrypt.hash(senha, 10);
 
-    const usuarioCadastrado = await db.query(
-      `INSERT INTO usuarios (nome, email, senha)
-       VALUES ($1, $2, $3) RETURNING *`,
-      [nome, email, senhaCriptografada]
-    )
+    const usuarioCadastrado = await knex("usuarios")
+      .insert({
+        nome,
+        email,
+        senha: senhaCriptografada
+      })
+      .returning("*");
 
-    if (usuarioCadastrado.rowCount <= 0) {
-      return res.status(500).json({ mensagem: "Erro interno do servidor." });
+    if (usuarioCadastrado.length === 0) {
+      return res.status(400).json({ mensagem: "O usuário não foi cadastrado." });
     }
-    const { senha: _, ...cadastro } = usuarioCadastrado.rows[0];
+    const { senha: _, ...dadosUsuario } = usuarioCadastrado[0];
 
-    return res.status(201).json(cadastro);
+    return res.status(201).json(dadosUsuario);
 
   } catch (error) {
     return res.status(500).json({ mensagem: "Erro interno do servidor." });
@@ -38,25 +36,21 @@ const cadastrarUsuario = async (req, res) => {
 const realizarLogin = async (req, res) => {
   const { email, senha } = req.body;
 
-  if (!email.trim() || !senha.trim()) {
-    return res.status(400).json({ mensagem: "Todos os campos obrigatórios devem ser informados." });
-  }
-
   try {
-    const { rows, rowCount } = await db.query(
-      "SELECT * FROM usuarios WHERE email = $1",
-      [email]
-    )
-    if (rowCount <= 0) {
+
+    const usuario = await knex("usuarios").where({ email }).first();
+
+    if (!usuario) {
       return res.status(400).json({ mensagem: "Usuário e/ou senha inválido(s)." });
     }
-    const usuario = rows[0];
+
     const senhaValida = await bcrypt.compare(senha, usuario.senha);
 
     if (!senhaValida) {
       return res.status(400).json({ mensagem: "Usuário e/ou senha inválido(s)." });
     }
-    const token = jwt.sign({ id: usuario.id }, TOKEN_PASSWORD, { expiresIn: "8h" });
+    const token = jwt.sign({ id: usuario.id }, process.env.TOKEN_PASSWORD, { expiresIn: "8h" });
+
     const { senha: _, ...usuarioLogado } = usuario;
 
     return res.status(200).json({ usuario: usuarioLogado, token })
@@ -75,19 +69,30 @@ const atualizarPerfilUsuario = async (req, res) => {
   const { nome, email, senha } = req.body;
 
   try {
-    const { rows, rowCount } = await db.query(
-      "SELECT * FROM usuarios WHERE email = $1",
-      [email]
-    )
-    if (rowCount > 0 && rows[0].id !== id) {
-      return res.status(401).json({ mensagem: "O e-mail informado já está sendo utilizado por outro usuário." })
+    const usuario = await knex("usuarios").where({ id }).first();
+
+    if (!usuario) {
+      return res.status(404).json({ mensagem: "Usuário não encontrado." });
+    }
+
+    if (usuario.email && usuario.id !== id) {
+      return res.status(401).json({
+        mensagem: "O e-mail informado já está sendo utilizado por outro usuário."
+      })
     }
     const senhaCriptografada = await bcrypt.hash(senha, 10);
 
-    await db.query(
-      "UPDATE usuarios SET nome = $1, email = $2, senha = $3 WHERE id = $4",
-      [nome, email, senhaCriptografada, id]
-    )
+    const usuarioAtualizado = await knex("usuarios")
+      .where({ id })
+      .update({
+        nome,
+        email,
+        senha: senhaCriptografada
+      }).debug()
+
+    if (!usuarioAtualizado) {
+      return res.status(400).json("O usuario não foi atualizado");
+    }
     return res.status(204).send();
 
   } catch (error) {

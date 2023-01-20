@@ -1,6 +1,5 @@
 const jwt = require("jsonwebtoken");
-const db = require("../conexaoBanco");
-const { TOKEN_PASSWORD } = require("../../credenciais");
+const knex = require("../conexao");
 
 const verificarUsuarioLogado = async (req, res, next) => {
     const { authorization } = req.headers;
@@ -11,18 +10,16 @@ const verificarUsuarioLogado = async (req, res, next) => {
     const token = authorization.split(" ")[1];
 
     try {
-        const { id } = jwt.verify(token, TOKEN_PASSWORD);
+        const { id } = jwt.verify(token, process.env.TOKEN_PASSWORD);
 
-        const { rows, rowCount } = await db.query(
-            "SELECT * FROM usuarios WHERE id = $1",
-            [id]
-        )
-        if (rowCount <= 0) {
+        const usuario = await knex("usuarios").where({ id }).first();
+
+        if (!usuario) {
             return res.status(404).json({ mensagem: "Usuário não encontrado." })
         }
-        const { senha: _, ...usuario } = rows[0];
+        const { senha: _, ...dadosUsuario } = usuario;
 
-        req.usuario = usuario;
+        req.usuario = dadosUsuario;
         next();
 
     } catch (error) {
